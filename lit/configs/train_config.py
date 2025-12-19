@@ -17,7 +17,7 @@ class train_config:
     # Adds a nudge 'Follow the instructions' to make the model more faithful to the control
     nudge_persona: bool = False  
     modify_chat_template: bool = True
-    filter: str = ""
+    filter: str = "" # 实现了黑名单过滤机制，FILTER 中指定的类型会被排除，其他类型会被保留
     train_percent: float = 1.0
 
     # Evaluation and logging args
@@ -27,13 +27,14 @@ class train_config:
     eval_stimulus: str = ""
     eval_control: str = ""
     eval_qa: str = ""
-    eval_every_n_steps: int = 500
+    eval_every_n_steps: int = 5000
     # Please change to a directory with ample space as model checkpoints are saved here
     output_dir: str = "out/runs"
     save_model: bool = True
-    save_every_n_steps: int = 500
-    use_wandb: bool = False
+    save_every_n_steps: int = 5000
+    use_swanlab: bool = False
     run_name: str = ""
+    debug_dataset: bool = False
 
     # Patching args
     shift_position_ids: bool = True

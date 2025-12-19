@@ -37,13 +37,39 @@ from torch.distributed.checkpoint.state_dict import (
 )
 from peft.tuners import PrefixEncoder, PromptEmbedding, PromptEncoder
 
-from lit.utils.dataset_utils import PAD_TOKEN_IDS
-
-
 ###################
 ###### Utils ######
 ###################
-
+def get_model_config_name(model_name_or_path):
+    """Get model config name from path or HF model ID"""
+    import os
+    import json
+    from pathlib import Path
+    
+    if "/" in model_name_or_path and not os.path.exists(model_name_or_path):
+        return model_name_or_path
+    
+    if os.path.isdir(model_name_or_path):
+        config_path = Path(model_name_or_path) / "config.json"
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                    if "_name_or_path" in config:
+                        name = config["_name_or_path"]
+                        if "/" in name and not os.path.exists(name):
+                            return name
+            except Exception:
+                pass
+        
+        path_parts = Path(model_name_or_path).parts
+        if len(path_parts) >= 2:
+            potential_name = f"{path_parts[-2]}/{path_parts[-1]}"
+            return potential_name
+        elif len(path_parts) >= 1:
+            return path_parts[-1]
+    
+    return model_name_or_path
 
 def update_config(config, **kwargs):
     def update_nested(obj, key, value):
@@ -64,7 +90,7 @@ def update_config(config, **kwargs):
                 update_nested(getattr(obj, parent), child, value)
         else:
             if type(obj).__name__ not in [
-                "wandb_config",
+                "swanlab_config",
                 "steering_config",
                 "fsdp_config",
             ]:
@@ -125,25 +151,43 @@ def save_model(decoder_model, ema_model, tokenizer, args, epoch, steps, logger, 
             logger.info(f"{name} is saved in {dir} directory")
 
 
-def setup_wandb(train_config, fsdp_config, **kwargs):
+def setup_swanlab(train_config, fsdp_config, **kwargs):
     try:
-        import wandb
+        import swanlab
     except ImportError:
         raise ImportError(
-            "You are trying to use wandb which is not currently installed. "
-            "Please install it using pip install wandb"
+            " You are trying to use swanlab which is not currently installed. "
+            "Please install it using pip install swanlab"
         )
-    from lit.configs.wandb_config import wandb_config as WANDB_CONFIG
+    from lit.configs.swanlab_config import swanlab_config as SWANLAB_CONFIG
 
-    wandb_config = WANDB_CONFIG()
-    update_config(wandb_config, **kwargs)
-    init_dict = asdict(wandb_config)
+    swanlab_config = SWANLAB_CONFIG()
+    update_config(swanlab_config, **kwargs)
+    init_dict = asdict(swanlab_config)
     if train_config.run_name != "":
         init_dict["name"] = train_config.run_name
-    run = wandb.init(**init_dict)
-    run.config.update(train_config)
+    run = swanlab.init(**init_dict)
+    
+    # Convert configs to serializable format before updating
+    def make_serializable(obj):
+        if hasattr(obj, '__dict__'):
+            result = {}
+            for key, value in vars(obj).items():
+                if key == 'peft_config' and hasattr(value, 'to_dict'):
+                    result[key] = value.to_dict()
+                elif hasattr(value, '__dict__'):
+                    result[key] = make_serializable(value)
+                else:
+                    result[key] = value
+            return result
+        else:
+            return obj
+    
+    # Update configs with serializable versions
+    swanlab.config.update(make_serializable(train_config))
     if fsdp_config is not None:
-        run.config.update(fsdp_config)
+        swanlab.config.update(make_serializable(fsdp_config))
+    
     return run
 
 
@@ -203,8 +247,12 @@ def get_tokenizer(model_name):
     tokenizer = AutoTokenizer.from_pretrained(
         model_name, padding_side="left", add_eos_token=True
     )
-    tokenizer.pad_token_id = PAD_TOKEN_IDS[model_name]
-    if "distill-qwen" in model_name.lower():
+    
+    from lit.utils.dataset_utils import PAD_TOKEN_IDS
+    config_name = get_model_config_name(model_name)
+
+    tokenizer.pad_token_id = PAD_TOKEN_IDS[config_name]
+    if "distill-qwen" in config_name.lower():
         tokenizer.add_tokens(["<|reserved_special_token_8|>"])
     return tokenizer
 

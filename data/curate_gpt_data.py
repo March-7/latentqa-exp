@@ -10,7 +10,7 @@ from tqdm import tqdm
 import asyncio
 import aiohttp
 
-from prompts import *
+from data.prompts import *
 
 MAX_TRIES = 7
 
@@ -203,37 +203,37 @@ if __name__ == "__main__":
     ###### Goal generation; uncomment each section to run ######
     ############################################################
     # Generate seed goals
-    # import itertools
-    # import numpy as np
-    # for category, goals in EVAL_GOALS.items():
-    #     for goals in itertools.combinations(goals, 5):
-    #         goal_str = "\n".join(np.random.permutation(goals))
-    #         queries.append((category, goal_str, "", "", ""))
-    # queries = np.random.permutation(np.array(queries))[:110]
-    # args.judge_fns = [JudgeFn(GENERATE_GOAL_PROMPT)]
+    import itertools
+    import numpy as np
+    for category, goals in EVAL_GOALS.items():
+        for goals in itertools.combinations(goals, 5):
+            goal_str = "\n".join(np.random.permutation(goals))
+            queries.append((category, goal_str, "", "", ""))
+    queries = np.random.permutation(np.array(queries))[:110]
+    args.judge_fns = [JudgeFn(GENERATE_GOAL_PROMPT)]
 
     # Expand goals
-    # with open("data/eval/goals.json", "r") as f:
-    #     goals = json.load(f)
-    # for goal in goals:
-    #     queries.append((goal, "", "", "", ""))
-    # args.judge_fns = [JudgeFn(EXPAND_GOAL_PROMPT)]
+    with open("data/eval/goals.json", "r") as f:
+        goals = json.load(f)
+    for goal in goals:
+        queries.append((goal, "", "", "", ""))
+    args.judge_fns = [JudgeFn(EXPAND_GOAL_PROMPT)]
 
     # Write QA pairs goals
-    # with open("data/eval/goals_expanded.json", "r") as f:
-    #     data = json.load(f)
-    # for item in data:
-    #     queries.append(
-    #         (
-    #             item["control_user"],
-    #             item["control_model"],
-    #             item["stimulus_user"],
-    #             item["stimulus_model"],
-    #             item["label"],
-    #         )
-    #     )
-    # args.judge_fns = [JudgeFn(PROBE_GOAL_DESCRIPTION)]
-    # args.judge_fns = [JudgeFn(PROBE_GOAL_REASONING)]
+    with open("data/eval/goals_expanded.json", "r") as f:
+        data = json.load(f)
+    for item in data:
+        queries.append(
+            (
+                item["control_user"],
+                item["control_model"],
+                item["stimulus_user"],
+                item["stimulus_model"],
+                item["label"],
+            )
+        )
+    args.judge_fns = [JudgeFn(PROBE_GOAL_DESCRIPTION)]
+    args.judge_fns = [JudgeFn(PROBE_GOAL_REASONING)]
 
     ############################################################
     ###### Persona generation; uncomment each section to run ######

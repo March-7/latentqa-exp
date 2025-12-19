@@ -5,7 +5,7 @@ import fire
 from tqdm import tqdm
 
 import numpy as np
-import wandb
+import swanlab
 from transformers import get_cosine_schedule_with_warmup
 from peft import LoraConfig
 import torch
@@ -21,10 +21,10 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = (
 
 from lit.configs.train_config import train_config
 from lit.configs.peft_config import lora_config
-from lit.utils.dataset_utils import get_dataloaders
+from lit.utils.dataset_utils import get_dataloaders, print_dataset_samples
 from lit.utils.infra_utils import (
     get_logger,
-    setup_wandb,
+    setup_swanlab,
     save_model,
     get_ema,
     update_ema,
@@ -60,13 +60,18 @@ def main(**kwargs):
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
 
     logger = get_logger(args, rank)
-    wandb_run = None
-    if args.use_wandb and rank == 0:
-        wandb_run = setup_wandb(args, fsdp_args, **kwargs)
+    swanlab_run = None
+    if args.use_swanlab and rank == 0:
+        swanlab_run = setup_swanlab(args, fsdp_args, **kwargs)
 
     # Load tokenizer and datasets
     tokenizer = get_tokenizer(args.target_model_name)
     train_dataloader, eval_dataloader = get_dataloaders(args, tokenizer)
+    
+    # Print dataset samples for debugging
+    if args.debug_dataset:
+        logger.info("打印数据集样本以供调试...")
+        print_dataset_samples(train_dataloader, tokenizer, num_samples=2, rank=rank)
 
     # Load the models
     target_model = get_model(
@@ -88,8 +93,8 @@ def main(**kwargs):
     torch.cuda.empty_cache()
     if rank == 0:
         decoder_model.module.print_trainable_parameters()
-        if wandb_run is not None and args.load_model_checkpoint == "":
-            wandb_run.config.update(peft_config)
+        if swanlab_run is not None and args.load_model_checkpoint == "":
+            swanlab_run.config.update({"peft_config": peft_config.to_dict()})
     module_read, module_write = get_modules(
         target_model, decoder_model, **args.__dict__
     )
@@ -157,8 +162,8 @@ def main(**kwargs):
                     update_ema(ema, decoder_model.module, decay=args.ema_decay)
                     pbar.update(1)
 
-            if wandb_run is not None:
-                wandb_run.log(
+            if swanlab_run is not None:
+                swanlab.log(
                     {
                         "train/epoch": epoch,
                         "train/step": epoch * len(train_dataloader) + step,
@@ -204,10 +209,10 @@ def main(**kwargs):
                     else None
                 )
                 dist.gather(losses, gathered_loss, dst=0)
-                if rank == 0 and wandb_run is not None:
+                if rank == 0 and swanlab_run is not None:
                     all_loss = torch.sum(torch.stack(gathered_loss))
                     all_loss = all_loss / len(eval_dataloader) / dist.get_world_size()
-                    wandb_run.log(
+                    swanlab.log(
                         {
                             "train/epoch": epoch,
                             "train/step": epoch * len(train_dataloader) + step,
@@ -244,8 +249,8 @@ def main(**kwargs):
             )
             dist.barrier()
 
-    if wandb_run is not None:
-        wandb.finish()
+    if swanlab_run is not None:
+        swanlab.finish()
     dist.destroy_process_group()
     logger.info("Training completed!")
 

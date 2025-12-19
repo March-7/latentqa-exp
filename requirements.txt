@@ -6,4 +6,5 @@ peft==0.10.0
 torch>=2.0.0
 transformers>=4.46.2
 tqdm
-wandb
+swanlab
+flash-attn

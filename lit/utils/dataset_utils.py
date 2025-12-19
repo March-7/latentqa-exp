@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 import torch.distributed as dist
+from lit.utils.infra_utils import get_model_config_name
 
 ###################################
 ###### Tokens and formatting ######
@@ -138,7 +139,7 @@ def mask_inputs(
     modify_chat_template=False,
 ):
     sys_tokens, start_tokens, end_tokens_default, end_tokens_modify = CHAT_FORMAT_TOKENS[
-        tokenizer_name
+        get_model_config_name(tokenizer_name)
     ]
     end_tokens = end_tokens_modify if modify_chat_template else end_tokens_default
     batch_size, seq_len = input_ids.shape
@@ -154,6 +155,12 @@ def mask_inputs(
                 start_idx.append(i)
             if torch.equal(input_ids[b][i : i + len(end_tokens)], end_tokens):
                 end_idx.append(i)
+        #    工作原理：
+        #    - 遍历序列的每个位置 i
+        #    - 检查从位置 i 开始的子序列是否等于目标 token 序列
+        #    - 如果匹配，记录起始位置 i
+        
+        # print(f"Batch {b} - sys_idx: {sys_idx}, start_idx: {start_idx}, end_idx: {end_idx}")
 
         if mask_type is None:
             if len(start_idx) != len(end_idx):
@@ -169,16 +176,82 @@ def mask_inputs(
                         mask[b][start - 1 : end + len(end_tokens)] = True
                     else:
                         mask[b][start : end + len(end_tokens)] = True
+                # 掩码所有的 user 的话：“<|start_header_id|>user<|end_header_id|>
+                # 
+                # xxx<|eot_id|><|start_header_id|>assistant<|end_header_id|>“
+
         elif mask_type[b] == "user":
             if len(start_idx) == 1:
                 continue
             mask[b][start_idx[0] : start_idx[1]] = True
+            # 仅掩码第一个turn
         elif mask_type[b] == "system":
             if len(sys_idx) == 0:
                 raise ValueError("No system message found to mask! This is usually because the model does not have a specific system turn, but your dataset does. You should not use the dataset with system turns for this particular model")
             mask[b][sys_idx[0] : start_idx[0]] = True
+            # 仅掩码系统消息
         else:
             raise ValueError(f"Invalid verb mask: {mask_type[b]}")
+    
+    # 打印完整的 input_ids 字符串，mask 为 True 的部分用蓝色标识
+    if hasattr(mask_inputs, '_debug_print') and mask_inputs._debug_print:
+        try:
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+            
+            # ANSI 颜色代码
+            BLUE = '\033[94m'
+            RESET = '\033[0m'
+            
+            print("\n" + "="*60)
+            print("🔍 MASK DEBUG INFO")
+            print("="*60)
+            
+            for b in range(batch_size):
+                print(f"\n📦 Batch {b}:")
+                
+                # 解码整个序列
+                full_text = tokenizer.decode(input_ids[b].tolist())
+                
+                # 获取 mask 为 True 的位置
+                true_indices = torch.where(mask[b])[0].tolist()
+                
+                if true_indices:
+                    print(f"🎯 Mask True positions: {true_indices}")
+                    
+                    # 构建带颜色的字符串
+                    colored_parts = []
+                    current_pos = 0
+                    
+                    for idx in range(len(input_ids[b])):
+                        if mask[b][idx]:
+                            # 当前位置需要着色
+                            token_text = tokenizer.decode([input_ids[b][idx].item()])
+                            colored_parts.append(f"{BLUE}{token_text}{RESET}")
+                        else:
+                            # 普通文本
+                            token_text = tokenizer.decode([input_ids[b][idx].item()])
+                            colored_parts.append(token_text)
+                    
+                    colored_text = ''.join(colored_parts)
+                    print(f"🔤 Full sequence with mask:")
+                    print(f"   {colored_text}")
+                    
+                    # 统计信息
+                    total_tokens = len(input_ids[b])
+                    masked_tokens = len(true_indices)
+                    print(f"📊 Stats: {masked_tokens}/{total_tokens} tokens masked ({masked_tokens/total_tokens*100:.1f}%)")
+                else:
+                    print("⚪ No True positions in mask")
+                    print(f"🔤 Full sequence:")
+                    print(f"   {full_text}")
+            
+            print("\n" + "="*60)
+            print("🏁 END DEBUG INFO")
+            print("="*60 + "\n")
+        except Exception as e:
+            print(f"❌ Debug print failed: {e}")
+    
     return mask
 
 
@@ -191,6 +264,25 @@ def lqa_tokenize(
     mask_all_but_last=False,
     modify_chat_template=False,
 ):
+    '''
+    Args:
+        batch (list): A list of dictionaries, each containing 'read_prompt' and 'dialog
+            keys.  
+            {
+                    "read_prompt": item["read_prompt"],
+                    "dialog": item["dialog"],
+                    "label": item["dialog"][-1]["content"],
+            }
+
+    tokenized_batch = {
+        "tokenized_read": tokenized_read,      # 目标模型输入的tokenized结果
+       "read_lengths": read_lengths,          # 读取序列的有效长度
+        "tokenized_write": tokenized_write,    # 解码器模型输入的tokenized结果
+        "write_lengths": write_lengths,        # 写入序列的有效长度
+       "verb_lengths": verb_lengths,          # (可选) 
+    #  verb部分的长度，仅当mask_type不为None时
+    }
+    '''
     name = tokenizer.name_or_path if name is None else name
     TOKENIZER_HAS_BOS = any(
         [
@@ -227,7 +319,7 @@ def lqa_tokenize(
         query = [
             {
                 "role": "user",
-                "content": "? " * (pad_lengths[i] - NUM_READ_TOKENS_TO_SHIFT[name]),
+                "content": "? " * (pad_lengths[i] - NUM_READ_TOKENS_TO_SHIFT[get_model_config_name(name)]),
             }
         ]
         query += batch[i]["dialog"]
@@ -237,7 +329,7 @@ def lqa_tokenize(
                 tokenize=False,
                 add_generation_prompt=generate,
                 chat_template=(
-                    DECODER_CHAT_TEMPLATES[name] if modify_chat_template else None
+                    DECODER_CHAT_TEMPLATES[get_model_config_name(name)] if modify_chat_template else None
                 ),
             )
         )
@@ -251,7 +343,7 @@ def lqa_tokenize(
 
     # Compute length of write input
     write_lengths = torch.sum(tokenized_write.attention_mask, dim=1)
-    tokenized_batch["write_lengths"] = write_lengths - NUM_WRITE_TOKENS_TO_SHIFT[name]
+    tokenized_batch["write_lengths"] = write_lengths - NUM_WRITE_TOKENS_TO_SHIFT[get_model_config_name(name)]
 
     # Add labels for training
     if not generate:
@@ -307,12 +399,12 @@ class LatentQADataset(Dataset):
         ]
         self.qa_data = qa_data
         self.add_thought_tokens = add_thought_tokens
-        self.chat_template = ENCODER_CHAT_TEMPLATES.get(tokenizer.name_or_path, None)
+        self.chat_template = ENCODER_CHAT_TEMPLATES.get(get_model_config_name(tokenizer.name_or_path), None)
         self.lengths = []
         for idx in range(self.__len__()):
             behavior, qa = self.get_behavior_qa(idx)
             self.lengths.append(
-                sum([len(s) for s in behavior]) + len(qa[0]) + len(qa[1])
+                sum([len(s) for s in behavior]) + sum([len(q) for q in qa])
             )
 
     def get_behavior_qa(self, idx):
@@ -514,11 +606,18 @@ def get_batch_sampler(dataset, train_config, mode):
 
 
 def get_dist_batch_sampler(dataset, train_config, mode):
+    if dist.is_initialized():
+        num_replicas = dist.get_world_size()
+        rank = dist.get_rank()
+    else:
+        num_replicas = 1
+        rank = 0
+    
     return DistributedLengthBasedBatchSampler(
         dataset,
         train_config.batch_size_training,
-        num_replicas=dist.get_world_size(),
-        rank=dist.get_rank(),
+        num_replicas=num_replicas,
+        rank=rank,
         shuffle=(mode == "train"),
         seed=train_config.seed,
     )
@@ -542,6 +641,7 @@ def get_dataset(train_config, tokenizer, train=True):
             for item in raw_data:
                 if item["label"].split("-")[0] in FILTER:
                     continue
+                # continue 实现了黑名单过滤机制，FILTER 中指定的类型会被排除，其他类型会被保留
                 data[item["label"]].append(
                     (
                         item.get("system", ""),
@@ -625,3 +725,148 @@ def get_dataloaders(train_config, tokenizer):
         return train_dataloader, eval_dataloader
 
     return train_dataloader, None
+
+
+def print_dataset_samples(dataloader, tokenizer, num_samples=2, rank=0):
+    if rank != 0:
+        return
+    
+    # ANSI 颜色代码
+    BLUE = '\033[94m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    ENDC = '\033[0m'
+    
+    print("\n" + "="*80)
+    print("数据集样本调试信息")
+    print("="*80)
+    
+    for batch_idx, batch in enumerate(dataloader):
+        if batch_idx >= num_samples:
+            break
+        
+        print(f"\n{'='*80}")
+        print(f"批次 {batch_idx + 1}:")
+        print(f"{'='*80}")
+        
+        batch_size = batch["tokenized_read"]["input_ids"].shape[0]
+        print(f"批次大小: {batch_size}")
+        
+        for sample_idx in range(min(2, batch_size)):
+            print(f"\n{'-'*80}")
+            print(f"样本 {sample_idx + 1}:")
+            print(f"{'-'*80}")
+            
+            print(f"\n{BLUE}[目标模型输入 (Read)]{ENDC}")
+            read_input_ids = batch["tokenized_read"]["input_ids"][sample_idx]
+            read_attention_mask = batch["tokenized_read"]["attention_mask"][sample_idx]
+            read_length = batch["read_lengths"][sample_idx].item()
+            
+            print(f"  序列长度: {read_input_ids.shape[0]}")
+            print(f"  Read Lengths: {read_length}")
+            print(f"  有效 token 数: {torch.sum(read_attention_mask).item()}")
+            print(f"  Input IDs 形状: {read_input_ids.shape}")
+            
+            # 打印 Input IDs
+            print(f"{GREEN}  Input IDs:{ENDC}")
+            ids_list = read_input_ids.tolist()
+            for i in range(0, len(ids_list), 20):
+                chunk = ids_list[i:i+20]
+                ids_str = " ".join(f"{id:6d}" for id in chunk)
+                print(f"    {ids_str}")
+            
+            # 打印 Attention Mask
+            print(f"{GREEN}  Attention Mask:{ENDC}")
+            mask_list = read_attention_mask.tolist()
+            for i in range(0, len(mask_list), 20):
+                chunk = mask_list[i:i+20]
+                mask_str = " ".join(f"{mask:6d}" for mask in chunk)
+                print(f"    {mask_str}")
+            
+            # 打印解码文本
+            valid_tokens = read_input_ids[read_attention_mask.bool()]
+            decoded_text = tokenizer.decode(valid_tokens, skip_special_tokens=False)
+            print(f"{GREEN}  解码文本:{ENDC}")
+            for line in decoded_text.split('\n'):
+                print(f"    {line}")
+            
+            if "verb_lengths" in batch:
+                verb_length = batch["verb_lengths"][sample_idx].item()
+                print(f"  Verb Lengths: {verb_length}")
+                print(f"  Pad Lengths: {read_length - verb_length}")
+            
+            print(f"\n{BLUE}[解码器模型输入 (Write)]{ENDC}")
+            write_input_ids = batch["tokenized_write"]["input_ids"][sample_idx]
+            write_attention_mask = batch["tokenized_write"]["attention_mask"][sample_idx]
+            write_length = batch["write_lengths"][sample_idx].item()
+            
+            print(f"  序列长度: {write_input_ids.shape[0]}")
+            print(f"  Write Lengths: {write_length}")
+            print(f"  有效 token 数: {torch.sum(write_attention_mask).item()}")
+            print(f"  Input IDs 形状: {write_input_ids.shape}")
+            
+            # 打印 Input IDs
+            print(f"{GREEN}  Input IDs:{ENDC}")
+            ids_list = write_input_ids.tolist()
+            for i in range(0, len(ids_list), 20):
+                chunk = ids_list[i:i+20]
+                ids_str = " ".join(f"{id:6d}" for id in chunk)
+                print(f"    {ids_str}")
+            
+            # 打印 Attention Mask
+            print(f"{GREEN}  Attention Mask:{ENDC}")
+            mask_list = write_attention_mask.tolist()
+            for i in range(0, len(mask_list), 20):
+                chunk = mask_list[i:i+20]
+                mask_str = " ".join(f"{mask:6d}" for mask in chunk)
+                print(f"    {mask_str}")
+            
+            # 打印解码文本
+            valid_write_tokens = write_input_ids[write_attention_mask.bool()]
+            decoded_write_text = tokenizer.decode(valid_write_tokens, skip_special_tokens=False)
+            print(f"{GREEN}  解码文本:{ENDC}")
+            for line in decoded_write_text.split('\n'):
+                print(f"    {line}")
+            
+            if "labels" in batch["tokenized_write"]:
+                labels = batch["tokenized_write"]["labels"][sample_idx]
+                print(f"\n{YELLOW}[标签信息]{ENDC}")
+                print(f"  Labels 形状: {labels.shape}")
+                
+                # 打印 Labels
+                print(f"{GREEN}  Labels:{ENDC}")
+                labels_list = labels.tolist()
+                for i in range(0, len(labels_list), 20):
+                    chunk = labels_list[i:i+20]
+                    labels_str = " ".join(f"{label:6d}" for label in chunk)
+                    print(f"    {labels_str}")
+                
+                # 创建标签的副本，将 IGNORE_IDX 替换为 padding token ID
+                labels_for_decode = labels.clone()
+                labels_for_decode[labels == IGNORE_IDX] = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+                
+                # 使用 attention_mask 来正确解码标签
+                valid_labels = labels_for_decode[write_attention_mask.bool()]
+                
+                if len(valid_labels) > 0:
+                    print(f"  非忽略标签数量: {len(labels[labels != IGNORE_IDX])}")
+                    decoded_labels = tokenizer.decode(valid_labels, skip_special_tokens=False)
+                    print(f"{GREEN}  解码标签:{ENDC}")
+                    for line in decoded_labels.split('\n'):
+                        print(f"    {line}")
+                    
+                    # 同时也打印原始非忽略标签的解码结果，以便对比
+                    non_ignored_labels = labels[labels != IGNORE_IDX]
+                    if len(non_ignored_labels) > 0:
+                        decoded_non_ignored = tokenizer.decode(non_ignored_labels, skip_special_tokens=False)
+                        print(f"{GREEN}  仅非忽略标签解码:{ENDC}")
+                        for line in decoded_non_ignored.split('\n'):
+                            print(f"    {line}")
+                else:
+                    print(f"  非忽略标签数量: 0")
+        
+        print(f"\n{'='*80}\n")
+    
+    print("数据集样本调试信息打印完成")
+    print("="*80 + "\n")
