@@ -68,11 +68,6 @@ def main(**kwargs):
     tokenizer = get_tokenizer(args.target_model_name)
     train_dataloader, eval_dataloader = get_dataloaders(args, tokenizer)
     
-    # Print dataset samples for debugging
-    if args.debug_dataset:
-        logger.info("打印数据集样本以供调试...")
-        print_dataset_samples(train_dataloader, tokenizer, num_samples=2, rank=rank)
-
     # Load the models
     target_model = get_model(
         args.target_model_name, tokenizer, fsdp_args=fsdp_args, device=device, rank=rank

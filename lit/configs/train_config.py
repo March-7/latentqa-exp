@@ -34,7 +34,6 @@ class train_config:
     save_every_n_steps: int = 5000
     use_swanlab: bool = False
     run_name: str = ""
-    debug_dataset: bool = False
 
     # Patching args
     shift_position_ids: bool = True
