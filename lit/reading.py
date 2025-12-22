@@ -5,13 +5,14 @@ import numpy as np
 import torch
 from transformers import PreTrainedModel
 
-from lit.utils.dataset_utils import tokenize, BASE_DIALOG, ENCODER_CHAT_TEMPLATES
+from lit.utils.dataset_utils import lqa_tokenize, BASE_DIALOG, ENCODER_CHAT_TEMPLATES
 from lit.utils.activation_utils import latent_qa
 from lit.utils.infra_utils import (
     update_config,
     get_model,
     get_tokenizer,
     get_modules,
+    get_model_config_name
 )
 
 QUESTIONS = [
@@ -53,7 +54,7 @@ def interpret(
     torch.backends.cudnn.deterministic = True
     torch.manual_seed(args.seed)
     module_read, module_write = get_modules(target_model, decoder_model, **vars(args))
-    chat_template = ENCODER_CHAT_TEMPLATES.get(tokenizer.name_or_path, None)
+    chat_template = ENCODER_CHAT_TEMPLATES.get(get_model_config_name(tokenizer.name_or_path), None)
 
     if all([len(d) == 1 for d in dialogs]):
         assert args.truncate == "none"
@@ -93,6 +94,8 @@ def interpret(
                 chat_template=chat_template,
             )
             mask_type = ["user"] * len(dialogs)
+
+            
         for item in questions:
             if generate:
                 dialog = [{"role": "user", "content": item[0]}]
@@ -107,7 +110,8 @@ def interpret(
                     "dialog": BASE_DIALOG + dialog,
                 }
             )
-    batch = tokenize(
+
+    batch = lqa_tokenize(
         probe_data,
         tokenizer,
         name=args.target_model_name,
@@ -137,7 +141,7 @@ def interpret(
                 QA_PAIRS[curr_dialog] = []
 
             prompt = questions[i % len(questions)][0]
-            num_tokens = batch["tokenized_write"][i].shape[0]
+            num_tokens = batch["tokenized_write"]["input_ids"][i].shape[0]
             completion = tokenizer.decode(out[i][num_tokens:])
             print(f"[PROMPT]: {prompt}")
             print(f"[COMPLETION]: {completion}")
@@ -199,15 +203,23 @@ def main(**kwargs):
         args.target_model_name,
         tokenizer,
         load_peft_checkpoint=args.decoder_model_name,
-        device="cuda:1",
+        device="cuda:0",
     )
     target_model = get_model(args.target_model_name, tokenizer, device="cuda:0")
     dialogs = [[args.prompt]]
     questions = QUESTIONS
-    loss = interpret(target_model, decoder_model, tokenizer, dialogs, questions, args, generate=False,
+    # loss = interpret(target_model, decoder_model, tokenizer, dialogs, questions, args, generate=False,
+    #         no_grad=False,
+    #         cache_target_model_grad=True)[1].loss 
+    QA_PAIRS, out, batch = interpret(target_model, decoder_model, tokenizer, dialogs, questions, args, generate=True,
             no_grad=False,
-            cache_target_model_grad=True)[1].loss 
-    print(loss)
+            cache_target_model_grad=True)
+    # print(loss)
+    print("Generated QA pairs:", QA_PAIRS)
+    print("Model outputs:")
+    print(out)
+    print("Input batch:")
+    print(batch)
 
 if __name__ == "__main__":
     fire.Fire(main)

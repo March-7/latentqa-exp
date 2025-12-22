@@ -43,6 +43,9 @@ class train_config:
     layer_to_write: int = 0
     # Change only if reading from multiple layers (at once or sequentially) during training
     module_setup: str = "read-vary_write-fixed_n-fixed"
+    # - read-vary_write-vary_n-fixed：读取和写入都使用可变层范围
+    # - read-vary_write-vary_n-vary：读取和写入都使用可变层范围，但写入范围不同
+    # - read-vary_write-fixed_n-fixed：读取使用可变层，写入使用固定层
     num_layers_to_read: int = 1
     num_layers_to_sample: int = 1
 
