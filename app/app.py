@@ -234,32 +234,37 @@ def analyze_dialog(query: str, response: str, question: str) -> str:
         logger.error(f"Error analyzing dialog: {e}")
         return f"分析错误: {str(e)}"
 
-def generate_and_analyze(query: str, question: str) -> Tuple[str, str, str]:
-    """生成回复并进行分析"""
-    try:
-        # 生成回复
-        response = generate_response(query)
-        
-        # 分析对话
-        analysis_result = analyze_dialog(query, response, question)
-        
-        return query, response, analysis_result
-        
-    except Exception as e:
-        logger.error(f"Error in generate_and_analyze: {e}")
-        return query, f"生成错误: {str(e)}", f"分析错误: {str(e)}"
+
 
 def create_interface():
     """创建Gradio界面"""
     
-    with gr.Blocks(title="LatentQA - 模型激活值分析", theme=gr.themes.Soft()) as interface:
+    with gr.Blocks(title="LatentQA - 模型激活值分析") as interface:
         gr.Markdown("# 🔍 LatentQA - 模型激活值分析工具")
         gr.Markdown("这是一个用于分析大语言模型内部状态的工具，可以通过解码器模型读取目标模型的激活值并生成自然语言解释。")
+        
+        # 系统状态模块（移动到顶部）
+        gr.Markdown("## 📊 系统状态")
+        status_text = gr.Textbox(
+            label="模型状态",
+            value="正在初始化...",
+            interactive=False
+        )
+        
+        # 初始化状态检查
+        def check_status():
+            if target_model is not None and decoder_model is not None:
+                return "✅ 模型已加载并就绪(Llama-3.1-8B-Instruct)"
+            else:
+                return "❌ 模型未初始化，请检查配置"
+        
+        interface.load(check_status, outputs=[status_text])
         
         with gr.Row():
             # 左侧：生成区域
             with gr.Column(scale=1):
-                gr.Markdown("## 📝 对话生成")
+                gr.Markdown("## 📝 对话生成 Model Chat")
+                gr.Markdown("与目标模型进行对话并生成回复")
                 
                 query_input = gr.Textbox(
                     label="输入查询",
@@ -291,7 +296,8 @@ def create_interface():
             
             # 右侧：分析区域
             with gr.Column(scale=1):
-                gr.Markdown("## 🧠 对话分析")
+                gr.Markdown("## 🧠 对话分析 Decoder Chat\n")
+                gr.Markdown("Ask the decoder about Llama's internal state")   
                 
                 question_input = gr.Dropdown(
                     label="分析问题",
@@ -328,23 +334,6 @@ def create_interface():
             inputs=[query_input, response_output, question_input, custom_question_input],
             outputs=[analysis_output]
         )
-        
-        # 状态指示器
-        gr.Markdown("## 📊 系统状态")
-        status_text = gr.Textbox(
-            label="模型状态",
-            value="正在初始化...",
-            interactive=False
-        )
-        
-        # 初始化状态检查
-        def check_status():
-            if target_model is not None and decoder_model is not None:
-                return "✅ 模型已加载并就绪"
-            else:
-                return "❌ 模型未初始化，请检查配置"
-        
-        interface.load(check_status, outputs=[status_text])
     
     return interface
 
@@ -366,7 +355,8 @@ def main():
         server_name="0.0.0.0",
         server_port=7860,
         share=False,
-        debug=True
+        debug=True,
+        theme=gr.themes.Soft()
     )
 
 if __name__ == "__main__":
