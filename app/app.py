@@ -313,38 +313,6 @@ def create_interface():
                     interactive=False
                 )
         
-        # 底部：一体化操作
-        gr.Markdown("## 🚀 一体化操作")
-        
-        with gr.Row():
-            all_in_one_query = gr.Textbox(
-                label="输入查询",
-                placeholder="请输入您的问题...",
-                lines=2,
-                value="Which month has 28 days?"
-            )
-            
-            all_in_one_question = gr.Dropdown(
-                label="分析问题",
-                choices=DEFAULT_QUESTIONS,
-                value=DEFAULT_QUESTIONS[0]
-            )
-        
-        all_in_one_btn = gr.Button("生成并分析", variant="primary", size="lg")
-        
-        with gr.Row():
-            all_in_one_response = gr.Textbox(
-                label="模型回复",
-                lines=3,
-                interactive=False
-            )
-            
-            all_in_one_analysis = gr.Textbox(
-                label="分析结果",
-                lines=3,
-                interactive=False
-            )
-        
         # 事件绑定
         generate_btn.click(
             generate_response,
@@ -359,12 +327,6 @@ def create_interface():
             lambda q, r, question, custom: analyze_dialog(q, r, get_analysis_question(question, custom)),
             inputs=[query_input, response_output, question_input, custom_question_input],
             outputs=[analysis_output]
-        )
-        
-        all_in_one_btn.click(
-            generate_and_analyze,
-            inputs=[all_in_one_query, all_in_one_question],
-            outputs=[all_in_one_query, all_in_one_response, all_in_one_analysis]
         )
         
         # 状态指示器
