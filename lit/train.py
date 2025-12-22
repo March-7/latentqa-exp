@@ -21,7 +21,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = (
 
 from lit.configs.train_config import train_config
 from lit.configs.peft_config import lora_config
-from lit.utils.dataset_utils import get_dataloaders, print_dataset_samples
+from lit.utils.dataset_utils import get_dataloaders
 from lit.utils.infra_utils import (
     get_logger,
     setup_swanlab,
