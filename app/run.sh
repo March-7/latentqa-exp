@@ -24,4 +24,4 @@ echo "✅ 已激活 deception 环境"
 
 # 启动应用
 echo "🌐 启动Gradio应用..."
-CUDA_VISIBLE_DEVICES=2 python3 app/app.py
+CUDA_VISIBLE_DEVICES=1 python3 app/app.py
